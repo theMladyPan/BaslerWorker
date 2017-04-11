@@ -1,15 +1,23 @@
 // BaslerWorker.cpp : Defines the entry point for the console application.
-//
+
+#undef UNICODE
 
 #include "stdafx.h"
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <windows.h>
 #include <iostream>
+#include <ws2tcpip.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include "libconfig.hh"
-
-
 #include <pylon/PylonIncludes.h>
 #ifdef PYLON_WIN_BUILD
 	#include <pylon/PylonGUI.h>
 #endif
+#include <string>
+
+#pragma comment (lib, "Ws2_32.lib")
 
 using namespace Pylon;
 using namespace std;
@@ -19,42 +27,167 @@ using namespace libconfig;
 static const uint32_t c_countOfImagesToGrab = 2;
 static const size_t c_maxCamerasToUse = 2;
 
+#define DEFAULT_BUFLEN 512
+#define DEFAULT_PORT "27015"
+#define VERBOSE
 
-struct kamera {
-	CInstantCamera camera;
-	unsigned long exposure;
-	unsigned char gain;
-	string ID;
-	string serial;
-};
+SOCKET init_sock(string port){
+	WSADATA wsaData;
+	int iResult;
+
+	SOCKET ListenSocket;
+	ListenSocket = INVALID_SOCKET;
+
+	struct addrinfo *result = NULL;
+	struct addrinfo hints;
+
+	int recvbuflen = DEFAULT_BUFLEN;
+	PCSTR def_port;
+	def_port = port.c_str();
+
+	// Initialize Winsock
+	iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
+	if (iResult != 0) {
+		cerr << "WSAStartup failed with error: " << iResult << endl;
+		return 1;
+	}
+
+	ZeroMemory(&hints, sizeof(hints));
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_protocol = IPPROTO_TCP;
+	hints.ai_flags = AI_PASSIVE;
+
+	// Resolve the server address and port
+	iResult = getaddrinfo(NULL, def_port, &hints, &result);
+	if (iResult != 0) {
+		cerr << "getaddrinfo failed with error: " << iResult << endl;
+		WSACleanup();
+		return 1;
+	}
+
+	// Create a SOCKET for connecting to server
+	ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+	if (ListenSocket == INVALID_SOCKET) {
+		cerr << "socket failed with error: " << WSAGetLastError() << endl;
+		freeaddrinfo(result);
+		WSACleanup();
+		return 1;
+	}
+
+	// Setup the TCP listening socket
+	iResult = bind(ListenSocket, result->ai_addr, (int)result->ai_addrlen);
+	if (iResult == SOCKET_ERROR) {
+		cerr << "bind failed with error: " << WSAGetLastError() << endl;
+		freeaddrinfo(result);
+		closesocket(ListenSocket);
+		WSACleanup();
+		return 1;
+	}
+
+	freeaddrinfo(result);
+
+	iResult = listen(ListenSocket, SOMAXCONN);
+	if (iResult == SOCKET_ERROR) {
+		cerr << "listen failed with error: " << WSAGetLastError() << endl;
+		closesocket(ListenSocket);
+		WSACleanup();
+		return 1;
+	}
+
+	return ListenSocket;
+}
+
+SOCKET accept_socket(string port) {
+
+	SOCKET *ClientSocket;
+	SOCKET *ListenSocket;
+
+	*ListenSocket = init_sock(port);
+
+	*ClientSocket = accept(*ListenSocket, NULL, NULL);
+	if (*ClientSocket == INVALID_SOCKET) {
+		cerr << "accept failed with error: " << WSAGetLastError() << endl;
+		closesocket(*ListenSocket);
+		WSACleanup();
+		return 1;
+	}
+	closesocket(*ListenSocket);
+	return *ClientSocket;
+}
+
+string recv_from_socket(SOCKET *socket) {
+	int iResult;
+	char recvbuf[DEFAULT_BUFLEN];
+
+	iResult = recv(*socket, recvbuf, DEFAULT_BUFLEN, 0);
+	if (iResult > 0) {
+		#ifdef VERBOSE
+		cout << "Bytes received: " << iResult << endl;
+		#endif		
+	}
+	else {
+
+		#ifdef VERBOSE
+		cout << "Nothing received" << endl;
+		#endif	
+		iResult = shutdown(*socket, SD_SEND);
+	}
+	
+	return recvbuf;
+}
+
+int close_socket(SOCKET *socket) {
+	int iResult;
+	iResult = shutdown(*socket, SD_SEND);
+	if (iResult == SOCKET_ERROR) {
+		cout << "shutdown failed with error: " << WSAGetLastError() << endl;
+		closesocket(*socket);
+		WSACleanup();
+		return 1;
+	}
+
+	// cleanup
+	closesocket(*socket);
+	WSACleanup();
+	return 0;
+}
 
 int main(int argc, char* argv[])
 {
-	// The exit code of the sample application.
+	#pragma region Init
 	int exitCode = 0;
+	string buffer;
+	PylonInitialize(); //inicializacia
+	CGrabResultPtr ptrGrabResult;
+#pragma endregion Init
 
-	// Before using any pylon methods, the pylon runtime must be initialized. 
-	PylonInitialize();
+	#pragma region Accept_socket
+	//Vytvor socket server a cakaj na pripojenie
+	#ifdef VERBOSE
+	cout << "Cakam na spojenie s PLC na porte localhost:" << DEFAULT_PORT << endl;
+	#endif
+	
+	SOCKET main_sock = accept_socket(DEFAULT_PORT); //Tu stoji do pripojenia !!!!
 
-	//vytvorit a analyzovat dostupne kamery
+	#pragma endregion Accept_socket
+
+	#pragma region Search_cameras
 	CTlFactory& tlfactory = CTlFactory::GetInstance();
-	DeviceInfoList_t devices;
+	DeviceInfoList_t devices; //priprava hladania kamier
+
 	tlfactory.EnumerateDevices(devices);
 	if (!devices.empty()) { //ak nie je prazdne pole:
 		DeviceInfoList_t::const_iterator it;
-		for (it = devices.begin(); it != devices.end(); ++it)
-			cout << it->GetFullName() << " found!" << endl << endl; //vypis nazov
+		for (it = devices.begin(); it != devices.end(); ++it) {
+#ifdef VERBOSE
+			cout << it->GetFullName() << " kamera sa nasla!" << endl << endl; //vypis nazov
+#endif	
+		}
 	}
-	else //inak vypis chybu
-		cerr << "No devices found!" << endl;
-
-	/*kamera kamery[8];
-	for (unsigned char i; i < 8; i++) {
-		kamery[i].camera.Attach(CTlFactory::GetInstance().CreateDevice());
-		kamery[i].serial = kamery[i].camera.GetDeviceInfo().GetSerialNumber();
-		cout << "found: " << kamery[i].serial << endl;
-	}*/
-
+	else { //inak vypis chybu
+		cerr << "Nenasli sa ziadne kamery!" << endl;
+	}
 
 	//vytvor pole kamier (max c_maxcamerastouse)
 	CInstantCameraArray kamery(min(devices.size(), c_maxCamerasToUse));
@@ -65,63 +198,74 @@ int main(int argc, char* argv[])
 		kamery[i].Attach(tlfactory.CreateDevice(devices[i]));
 	}
 
-	try
-	{
-		// Create an instant camera object with the camera device found first.
-		//CInstantCamera camera(CTlFactory::GetInstance().CreateFirstDevice());
+#pragma endregion Search_cameras
 
-		// Print the model name of the camera.
-		//cout << "Using device " << camera.GetDeviceInfo().GetFullName()<< ", serial: " << camera.GetDeviceInfo().GetSerialNumber() << endl;
+	#pragma region Endless_loop
+	do {
+		#pragma region Accept_data
+		buffer = recv_from_socket(&main_sock); //nacitaj data zo socketu
+		#ifdef VERBOSE
+		cout << "Prijaty kod: "<<buffer << endl;
+		#endif
+		string serial, filename;
+		serial = buffer.substr(0, 8);//skopiruj S/N zo stringu
+		filename = buffer.substr(8, buffer.length() - 8); //parse filename
+		#ifdef VERBOSE
+		cout << "s/n: " << serial << ", filename: " << filename << endl;
+		#endif
+		#pragma endregion Accept_data
 
-		// The parameter MaxNumBuffer can be used to control the count of buffers allocated for grabbing. The default value of this parameter is 10.
-		//camera.MaxNumBuffer = 5;
+		#pragma region GrabImage
+		for (int i = 0; i < kamery.GetSize(); i++) {
+			if(serial.compare(kamery[i].GetDeviceInfo().GetSerialNumber())) {
+				cout << "Nasiel som pripojenu kameru: " << serial << "Zachytavam obraz do suboru: " << filename << endl;
+				kamery[i].StartGrabbing(1);// c_countOfImagesToGrab);
 
-		// Start the grabbing of c_countOfImagesToGrab images. The camera device is parameterized with a default configuration which sets up free-running continuous acquisition.
-		kamery[0].StartGrabbing(c_countOfImagesToGrab);
+				try {
+					while (kamery[i].IsGrabbing())
+					{
+						// Wait for an image and then retrieve it. A timeout of 5000 ms is used.
+						kamery[i].RetrieveResult(5000, ptrGrabResult, TimeoutHandling_ThrowException);
 
-		// This smart pointer will receive the grab result data.
-		CGrabResultPtr ptrGrabResult;
+						// Image grabbed successfully?
+						if (ptrGrabResult->GrabSucceeded())
+						{
+							// Access the image data.
+							//cout << "SizeX: " << ptrGrabResult->GetWidth() << endl;
+							//cout << "SizeY: " << ptrGrabResult->GetHeight() << endl;
+							const uint8_t *pImageBuffer = (uint8_t *)ptrGrabResult->GetBuffer();
+							//cout << "Gray value of first pixel: " << (uint32_t)pImageBuffer[0] << endl << endl;
 
-		// Camera.StopGrabbing() is called automatically by the RetrieveResult() method when c_countOfImagesToGrab images have been retrieved.
-		while (kamery[0].IsGrabbing())
-		{
-			// Wait for an image and then retrieve it. A timeout of 5000 ms is used.
-			kamery[0].RetrieveResult(5000, ptrGrabResult, TimeoutHandling_ThrowException);
+							#ifdef PYLON_WIN_BUILD
+							Pylon::DisplayImage(1, ptrGrabResult);	// Display the grabbed image.
+							#endif
+						}
+						else
+						{
+							cout << "Error: " << ptrGrabResult->GetErrorCode() << " " << ptrGrabResult->GetErrorDescription() << endl;
+						}
+					}
+				}catch (const GenericException &e)
+				{
+					// Error handling.
+					cerr << "An exception occurred." << endl
+						<< e.GetDescription() << endl;
+					exitCode = 1;
+				}
 
-			// Image grabbed successfully?
-			if (ptrGrabResult->GrabSucceeded())
-			{
-				// Access the image data.
-				//cout << "SizeX: " << ptrGrabResult->GetWidth() << endl;
-				//cout << "SizeY: " << ptrGrabResult->GetHeight() << endl;
-				const uint8_t *pImageBuffer = (uint8_t *)ptrGrabResult->GetBuffer();
-				//cout << "Gray value of first pixel: " << (uint32_t)pImageBuffer[0] << endl << endl;
-
-				#ifdef PYLON_WIN_BUILD
-				// Display the grabbed image.
-					Pylon::DisplayImage(1, ptrGrabResult);
-				#endif
-			}
-			else
-			{
-				cout << "Error: " << ptrGrabResult->GetErrorCode() << " " << ptrGrabResult->GetErrorDescription() << endl;
+				buffer = "#exit"; //ukonci loop
 			}
 		}
-	}
-	catch (const GenericException &e)
-	{
-		// Error handling.
-		cerr << "An exception occurred." << endl
-			<< e.GetDescription() << endl;
-		exitCode = 1;
-	}
+		#pragma endregion GrabImage
 
-	// Comment the following two lines to disable waiting on exit.
-	cerr << endl << "Press Enter to exit." << endl;
-	while (cin.get() != '\n');
+	} while (buffer!= "#exit");
+	cout << "Aplikacia ukoncena vzdialenym klientom kodom: "<< buffer << endl;
+
+	#pragma endregion Endless_loop	
+	
 
 	// Releases all pylon resources. 
 	PylonTerminate();
 
-	return exitCode;
+	return 0;
 }
