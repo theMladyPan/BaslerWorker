@@ -30,14 +30,13 @@ using namespace std;
 using namespace libconfig;
 using namespace cv;
 
-static const uint32_t c_countOfImagesToGrab = 2;				// Number of images to be grabbed.
-static const size_t c_maxCamerasToUse = 2;
+static const size_t c_maxCamerasToUse = 8;
 static bool connection_alive = false;
 static bool run_program = true;
 
+//#define VERBOSE
 #define DEFAULT_BUFLEN 256
 #define DEFAULT_PORT "27015"
-#define VERBOSE
 #define EXIT_KEY "#exit"
 #define CLOSE_KEY "#close"
 
@@ -204,6 +203,7 @@ int main(int argc, char* argv[])
 	bool camera_found = false;
 	Mat	opencvImage;
 	CPylonImage pylonImage;
+	CImageFormatConverter formatConverter;
 	#pragma endregion Init
 
 	while (run_program) {									//po odpojeni socketu cakaj na dalsi, zober fotky a tak dookola...
@@ -271,13 +271,15 @@ int main(int argc, char* argv[])
 				if (!temp.compare(serial)) {
 					camera_found = true;
 					send_over_socket(main_sock, CAMERA_FOUND);
-					cout << "Nasiel som pripojenu kameru: " << serial << "Zachytavam obraz do suboru: " << filename << endl;
+#ifdef VERBOSE
+					cout << "Nasiel som pripojenu kameru: " << serial << endl<<"Zachytavam obraz do suboru: " << filename << endl;
+#endif
 					kamery[i].StartGrabbing(1);				// Zachyt 1 obrazok
 					terminate = true;
 
 					try {
 						while (kamery[i].IsGrabbing())
-						{							
+						{		
 							kamery[i].RetrieveResult(5000, ptrGrabResult, TimeoutHandling_ThrowException);	// Wait for an image and then retrieve it. A timeout of 5000 ms is used.
 							if (ptrGrabResult->GrabSucceeded())												//Zachytilo obrazok uspesne?
 							{
@@ -289,11 +291,20 @@ int main(int argc, char* argv[])
 
 #ifdef PYLON_WIN_BUILD
 #ifdef VERBOSE
-								Pylon::DisplayImage(1, ptrGrabResult);	// Display the grabbed image.
+								Pylon::DisplayImage(1, ptrGrabResult);		// Display the grabbed image.
 #endif
-#endif			
-								opencvImage = cv::Mat(ptrGrabResult->GetHeight(),ptrGrabResult->GetWidth(), CV_8UC3,(uint8_t *) pylonImage.GetBuffer());
-								imwrite(filename, opencvImage);
+#endif	
+								formatConverter.Convert(pylonImage, ptrGrabResult);
+								int resolution = MulDiv(ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth(), 1);
+								try {										//skús uloži obrázok
+									opencvImage = cv::Mat(ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth(), CV_8UC1, (uint8_t *)pylonImage.GetBuffer());
+
+									imwrite(filename, opencvImage);
+								}
+								catch (const GenericException &e) {
+									cerr << e.GetDescription() << endl << "Line: " << e.GetSourceLine() << endl;
+									break;
+								}
 
 							}
 							else
