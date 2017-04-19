@@ -27,10 +27,19 @@ using namespace libconfig;
 static const uint32_t c_countOfImagesToGrab = 2;
 static const size_t c_maxCamerasToUse = 2;
 static bool connection_alive = false;
+static bool run_program = true;
 
-#define DEFAULT_BUFLEN 512
+#define DEFAULT_BUFLEN 256
 #define DEFAULT_PORT "27015"
 #define VERBOSE
+#define EXIT_KEY "#exit"
+#define CLOSE_KEY "#close"
+
+#define SN_NOT_FOUND "err_sn_not_found"
+#define NO_CAMERA_FOUND "err_no_camera_found"
+#define CAMERA_FOUND "camera_found"
+#define CAPTURE_FAILED "err_capture_failed"
+
 
 SOCKET init_sock(string port){
 	WSADATA wsaData;
@@ -136,7 +145,7 @@ string recv_from_socket(SOCKET socket) {
 		cout << "Nothing received" << endl;
 		#endif	
 		iResult = shutdown(socket, SD_SEND);
-		string temp = "#exit";
+		string temp = CLOSE_KEY;
 		strcpy_s(recvbuf, temp.c_str());
 		connection_alive = false;
 	}
@@ -149,7 +158,6 @@ int send_over_socket(SOCKET socket, string buffer_to_send) {
 	if (connection_alive) {
 		char sendbuf[128];
 		strcpy_s(sendbuf, buffer_to_send.c_str());
-		int iSendResult;
 		iSendResult = send(socket, sendbuf, buffer_to_send.length(), 0);
 		if (iSendResult == SOCKET_ERROR) {
 			printf("send failed with error: %d\n", WSAGetLastError());
@@ -172,7 +180,6 @@ int close_socket(SOCKET socket) {
 		return 1;
 	}
 
-	// cleanup
 	closesocket(socket);
 	WSACleanup();
 	connection_alive = false;
@@ -184,129 +191,132 @@ int main(int argc, char* argv[])
 	#pragma region Init
 	int exitCode = 0;
 	string buffer;
-	PylonInitialize(); //inicializacia
+	PylonInitialize();			//inicializacia kamier a ost.
 	CGrabResultPtr ptrGrabResult;
 	bool terminate = false;
 	string temp;
+	SOCKET main_sock;
+	bool camera_found = false;
 	#pragma endregion Init
 
-	//Vytvor socket server a cakaj na pripojenie
-	#ifdef VERBOSE
-	cout << "Cakam na spojenie s PLC na porte localhost:" << DEFAULT_PORT << endl;	
-	#endif
-	
-	SOCKET main_sock = accept_socket(DEFAULT_PORT); //Tu stoji do pripojenia !!!!
+	while (run_program) {		//po odpojeni socketu cakaj na dalsi, zober fotky a tak dookola...
 
-	CTlFactory& tlfactory = CTlFactory::GetInstance();
-	DeviceInfoList_t devices; //priprava hladania kamier
+#ifdef VERBOSE
+		cout << "Cakam na spojenie s PLC na porte localhost:" << DEFAULT_PORT << endl;
+#endif
 
-	tlfactory.EnumerateDevices(devices);
-	if (!devices.empty()) { //ak nie je prazdne pole kamier, ziteruj ich a identifikuj:
-		DeviceInfoList_t::const_iterator it;
-		for (it = devices.begin(); it != devices.end(); ++it) {
-			#ifdef VERBOSE
-			cout << it->GetFullName() << "S/N: "<< it->GetSerialNumber()<< " kamera sa nasla!" << endl << endl; //vypis nazov
-			temp = std::string(it->GetSerialNumber());
-			#endif	
-			send_over_socket(main_sock, temp);
+		main_sock = accept_socket(DEFAULT_PORT);	//Vytvor socket server a cakaj na pripojenie, pozor, tu stoji do pripojenia !!!!
 
-		}
-	}
-	else { //inak vypis chybu
-		cerr << "Nenasli sa ziadne kamery!" << endl;
-		send_over_socket(main_sock, "err_no_camera_found");
+		CTlFactory& tlfactory = CTlFactory::GetInstance();
+		DeviceInfoList_t devices;					//priprava hladania kamier
 
-	}
+		tlfactory.EnumerateDevices(devices);
+		if (!devices.empty()) {						//ak nie je prazdne pole kamier, ziteruj ich a identifikuj:
+			DeviceInfoList_t::const_iterator it;
+			for (it = devices.begin(); it != devices.end(); ++it) {
+#ifdef VERBOSE
+				cout << it->GetFullName() << "S/N: " << it->GetSerialNumber() << " kamera sa nasla!" << endl << endl; //vypis nazov
+#endif	
+				temp = string(it->GetSerialNumber());
+				temp.insert(0, "C_");
+				temp.append(";");
+				send_over_socket(main_sock, temp);
 
-	//vytvor pole kamier (max c_maxcamerastouse)
-	CInstantCameraArray kamery(min(devices.size(), c_maxCamerasToUse));
-
-	//napln ich
-	for (size_t i = 0; i < kamery.GetSize(); ++i)
-	{
-		kamery[i].Attach(tlfactory.CreateDevice(devices[i]));
-	}
-
-	do {
-		buffer = recv_from_socket(main_sock); //nacitaj data zo socketu
-		if (buffer == "#exit")break; //ak je prikaz koniec - BREAK
-
-		#ifdef VERBOSE
-		cout << "Prijaty kod: "<<buffer << endl;
-		#endif
-
-		string serial, filename;
-		serial = buffer.substr(0, 8);//skopiruj S/N zo stringu
-		filename = buffer.substr(8, buffer.length() - 8); //parse filename
-		buffer = "";
-
-
-		#ifdef VERBOSE
-		cout << "s/n: " << serial << ", filename: " << filename << endl;
-		#endif
-
-		for (int i = 0; i < kamery.GetSize(); i++) {
-			temp = std::string(kamery[i].GetDeviceInfo().GetSerialNumber());
-			if(!temp.compare(serial)) {
-				cout << "Nasiel som pripojenu kameru: " << serial << "Zachytavam obraz do suboru: " << filename << endl;
-				kamery[i].StartGrabbing(1);// Zachyt 1 obrazok
-				terminate = true;
-
-				try {
-					while (kamery[i].IsGrabbing())
-					{
-						// Wait for an image and then retrieve it. A timeout of 5000 ms is used.
-						kamery[i].RetrieveResult(5000, ptrGrabResult, TimeoutHandling_ThrowException);
-
-						// Image grabbed successfully?
-						if (ptrGrabResult->GrabSucceeded())
-						{
-							// Access the image data.
-							//cout << "SizeX: " << ptrGrabResult->GetWidth() << endl;
-							//cout << "SizeY: " << ptrGrabResult->GetHeight() << endl;
-							const uint8_t *pImageBuffer = (uint8_t *)ptrGrabResult->GetBuffer();
-							//cout << "Gray value of first pixel: " << (uint32_t)pImageBuffer[0] << endl << endl;
-
-							#ifdef PYLON_WIN_BUILD
-							#ifdef VERBOSE
-							Pylon::DisplayImage(1, ptrGrabResult);	// Display the grabbed image.
-							#endif
-							#endif			
-						}
-						else
-						{
-							cout << "Error: " << ptrGrabResult->GetErrorCode() << " " << ptrGrabResult->GetErrorDescription() << endl;
-							buffer = "#exit";
-						}
-					}
-				}catch (const GenericException &e)
-				{
-					// Error handling.
-					cerr << "An exception occurred." << endl << e.GetDescription() << endl;
-					send_over_socket(main_sock, "err_capt_image");
-					exitCode = 1;
-				}
-
-				//buffer = "#exit"; //ukonci loop
 			}
 		}
+		else { //inak vypis chybu
+			cerr << "Nenasli sa ziadne kamery!" << endl;
+			send_over_socket(main_sock, NO_CAMERA_FOUND);
 
+		}
+		CInstantCameraArray kamery(min(devices.size(), c_maxCamerasToUse));		//vytvor pole kamier (max c_maxcamerastouse)
 
+		for (size_t i = 0; i < kamery.GetSize(); ++i)		//napln ich dostupnymi kamerami
+		{
+			kamery[i].Attach(tlfactory.CreateDevice(devices[i]));
+		}
 
-	} while (buffer!= "#exit");
+		do {
+			buffer = recv_from_socket(main_sock);			//nacitaj data zo socketu
+			if (buffer == CLOSE_KEY)break;					//ak je prikaz koniec	- zavri kamery aj Socket
+			if (buffer == EXIT_KEY) {						//ak je prikaz EXIT_KEY	- zavri a opust program
+				run_program = false;
+				break;
+			}
 
-	#ifdef VERBOSE
-	cout << "Aplikacia ukoncena vzdialenym klientom kodom: "<< buffer << endl;
-	#endif
+#ifdef VERBOSE
+			cout << "Prijaty kod: " << buffer << endl;
+#endif
 
-	if (connection_alive) {
-		close_socket(main_sock);
-	}
-	
+			string serial, filename;
+			serial = buffer.substr(0, 8);						//skopiruj S/N zo stringu
+			filename = buffer.substr(8, buffer.length() - 8);	//aj nazov suboru
+			buffer = "";										//zmaž buffer
 
-	// Releases all pylon resources. 
-	//PylonTerminate(); // nefunguje !!!
-	
+#ifdef VERBOSE
+			cout << "s/n: " << serial << ", filename: " << filename << endl;
+#endif
+			camera_found = false;
+			for (int i = 0; i < kamery.GetSize(); i++) {
+				temp = std::string(kamery[i].GetDeviceInfo().GetSerialNumber());
+				if (!temp.compare(serial)) {
+					camera_found = true;
+					send_over_socket(main_sock, CAMERA_FOUND);
+					cout << "Nasiel som pripojenu kameru: " << serial << "Zachytavam obraz do suboru: " << filename << endl;
+					kamery[i].StartGrabbing(1);					// Zachyt 1 obrazok
+					terminate = true;
+
+					try {
+						while (kamery[i].IsGrabbing())
+						{							
+							kamery[i].RetrieveResult(5000, ptrGrabResult, TimeoutHandling_ThrowException);	// Wait for an image and then retrieve it. A timeout of 5000 ms is used.
+							if (ptrGrabResult->GrabSucceeded())												//Zachytilo obrazok uspesne?
+							{
+								// Access the image data.
+								//cout << "SizeX: " << ptrGrabResult->GetWidth() << endl;
+								//cout << "SizeY: " << ptrGrabResult->GetHeight() << endl;
+								const uint8_t *pImageBuffer = (uint8_t *)ptrGrabResult->GetBuffer();
+								//cout << "Gray value of first pixel: " << (uint32_t)pImageBuffer[0] << endl << endl;
+
+#ifdef PYLON_WIN_BUILD
+#ifdef VERBOSE
+								Pylon::DisplayImage(1, ptrGrabResult);	// Display the grabbed image.
+#endif
+#endif			
+							}
+							else
+							{
+								cout << "Error: " << ptrGrabResult->GetErrorCode() << " " << ptrGrabResult->GetErrorDescription() << endl;
+								buffer = CLOSE_KEY;
+								send_over_socket(main_sock, CAPTURE_FAILED);
+							}
+						}
+					}
+					catch (const GenericException &e)
+					{
+						cerr << "An exception occurred." << endl << e.GetDescription() << endl;
+						send_over_socket(main_sock, "err_capt_image");
+						exitCode = 1;
+					}
+				}
+			}
+			if (!camera_found) {
+				cerr << SN_NOT_FOUND << endl;
+				send_over_socket(main_sock, SN_NOT_FOUND);
+			}
+
+		} while (buffer != CLOSE_KEY);		//koniec hlavnej sluèky príjmu dát
+
+#ifdef VERBOSE
+		cout << "Aplikacia ukoncena vzdialenym klientom kodom: " << buffer << endl;
+#endif
+
+		if (connection_alive) {
+			close_socket(main_sock);
+		}
+		// Releases all pylon resources. 
+		//PylonTerminate(); // nefunguje !!!
+	}	//koniec sluèky programu
 
 	return 0;
 }
