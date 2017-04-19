@@ -1,4 +1,7 @@
-// BaslerWorker.cpp : Defines the entry point for the console application.
+/* BaslerWorker.cpp : Defines the entry point for the console application.
+Created under GNU/GPL license v3
+Author: Stanislav Rubint, Ing., www.rubint.sk, 2017
+*/
 
 #undef UNICODE
 
@@ -11,6 +14,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "libconfig.hh"
+#include <opencv2\core\core.hpp>
+#include <opencv2\highgui\highgui.hpp>
+#include <opencv2\video\video.hpp>
 #include <pylon/PylonIncludes.h>
 #ifdef PYLON_WIN_BUILD
 	#include <pylon/PylonGUI.h>
@@ -22,9 +28,9 @@
 using namespace Pylon;
 using namespace std;
 using namespace libconfig;
+using namespace cv;
 
-// Number of images to be grabbed.
-static const uint32_t c_countOfImagesToGrab = 2;
+static const uint32_t c_countOfImagesToGrab = 2;				// Number of images to be grabbed.
 static const size_t c_maxCamerasToUse = 2;
 static bool connection_alive = false;
 static bool run_program = true;
@@ -134,13 +140,12 @@ string recv_from_socket(SOCKET socket) {
 
 	iResult = recv(socket, recvbuf, DEFAULT_BUFLEN, 0);
 	if (iResult > 0) {
-		#ifdef VERBOSE
+#ifdef VERBOSE
 		cout << "Bytes received: " << iResult << endl;
+#endif		
 		recvbuf[iResult] = 0;
-		#endif		
 	}
 	else {
-
 		#ifdef VERBOSE
 		cout << "Nothing received" << endl;
 		#endif	
@@ -191,27 +196,29 @@ int main(int argc, char* argv[])
 	#pragma region Init
 	int exitCode = 0;
 	string buffer;
-	PylonInitialize();			//inicializacia kamier a ost.
+	PylonInitialize();										//inicializacia kamier a ost.
 	CGrabResultPtr ptrGrabResult;
 	bool terminate = false;
 	string temp;
 	SOCKET main_sock;
 	bool camera_found = false;
+	Mat	opencvImage;
+	CPylonImage pylonImage;
 	#pragma endregion Init
 
-	while (run_program) {		//po odpojeni socketu cakaj na dalsi, zober fotky a tak dookola...
+	while (run_program) {									//po odpojeni socketu cakaj na dalsi, zober fotky a tak dookola...
 
 #ifdef VERBOSE
 		cout << "Cakam na spojenie s PLC na porte localhost:" << DEFAULT_PORT << endl;
 #endif
 
-		main_sock = accept_socket(DEFAULT_PORT);	//Vytvor socket server a cakaj na pripojenie, pozor, tu stoji do pripojenia !!!!
+		main_sock = accept_socket(DEFAULT_PORT);			//Vytvor socket server a cakaj na pripojenie, pozor, tu stoji do pripojenia !!!!
 
 		CTlFactory& tlfactory = CTlFactory::GetInstance();
-		DeviceInfoList_t devices;					//priprava hladania kamier
+		DeviceInfoList_t devices;							//priprava hladania kamier
 
 		tlfactory.EnumerateDevices(devices);
-		if (!devices.empty()) {						//ak nie je prazdne pole kamier, ziteruj ich a identifikuj:
+		if (!devices.empty()) {								//ak nie je prazdne pole kamier, ziteruj ich a identifikuj:
 			DeviceInfoList_t::const_iterator it;
 			for (it = devices.begin(); it != devices.end(); ++it) {
 #ifdef VERBOSE
@@ -219,8 +226,10 @@ int main(int argc, char* argv[])
 #endif	
 				temp = string(it->GetSerialNumber());
 				temp.insert(0, "C_");
+				temp.append(",IP_");
+				temp.append(string(it->GetFullName()),33, string(it->GetFullName()).find_first_of(':')-string(it->GetFullName()).find_last_of('#')-1);
 				temp.append(";");
-				send_over_socket(main_sock, temp);
+				send_over_socket(main_sock, temp);			//urob cary/mary, pridaj S/N kamery a IP adresu a posli cez socket
 
 			}
 		}
@@ -229,7 +238,7 @@ int main(int argc, char* argv[])
 			send_over_socket(main_sock, NO_CAMERA_FOUND);
 
 		}
-		CInstantCameraArray kamery(min(devices.size(), c_maxCamerasToUse));		//vytvor pole kamier (max c_maxcamerastouse)
+		CInstantCameraArray kamery(min(devices.size(), c_maxCamerasToUse));				//vytvor pole kamier (max c_maxcamerastouse)
 
 		for (size_t i = 0; i < kamery.GetSize(); ++i)		//napln ich dostupnymi kamerami
 		{
@@ -249,9 +258,9 @@ int main(int argc, char* argv[])
 #endif
 
 			string serial, filename;
-			serial = buffer.substr(0, 8);						//skopiruj S/N zo stringu
-			filename = buffer.substr(8, buffer.length() - 8);	//aj nazov suboru
-			buffer = "";										//zmaž buffer
+			serial = buffer.substr(0, 8);												//skopiruj S/N zo stringu
+			filename = buffer.substr(8, buffer.length() - 8);							//aj nazov suboru
+			buffer = "";																//zmaž buffer
 
 #ifdef VERBOSE
 			cout << "s/n: " << serial << ", filename: " << filename << endl;
@@ -263,7 +272,7 @@ int main(int argc, char* argv[])
 					camera_found = true;
 					send_over_socket(main_sock, CAMERA_FOUND);
 					cout << "Nasiel som pripojenu kameru: " << serial << "Zachytavam obraz do suboru: " << filename << endl;
-					kamery[i].StartGrabbing(1);					// Zachyt 1 obrazok
+					kamery[i].StartGrabbing(1);				// Zachyt 1 obrazok
 					terminate = true;
 
 					try {
@@ -283,10 +292,13 @@ int main(int argc, char* argv[])
 								Pylon::DisplayImage(1, ptrGrabResult);	// Display the grabbed image.
 #endif
 #endif			
+								opencvImage = cv::Mat(ptrGrabResult->GetHeight(),ptrGrabResult->GetWidth(), CV_8UC3,(uint8_t *) pylonImage.GetBuffer());
+								imwrite(filename, opencvImage);
+
 							}
 							else
 							{
-								cout << "Error: " << ptrGrabResult->GetErrorCode() << " " << ptrGrabResult->GetErrorDescription() << endl;
+								cerr << "Error: " << ptrGrabResult->GetErrorCode() << " " << ptrGrabResult->GetErrorDescription() << endl;
 								buffer = CLOSE_KEY;
 								send_over_socket(main_sock, CAPTURE_FAILED);
 							}
