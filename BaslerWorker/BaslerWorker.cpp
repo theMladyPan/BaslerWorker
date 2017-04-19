@@ -100,27 +100,27 @@ SOCKET init_sock(string port){
 
 SOCKET accept_socket(string port) {
 
-	SOCKET *ClientSocket;
-	SOCKET *ListenSocket;
+	SOCKET ClientSocket;
+	SOCKET ListenSocket;
 
-	*ListenSocket = init_sock(port);
+	ListenSocket = init_sock(port);
 
-	*ClientSocket = accept(*ListenSocket, NULL, NULL);
-	if (*ClientSocket == INVALID_SOCKET) {
+	ClientSocket = accept(ListenSocket, NULL, NULL);
+	if (ClientSocket == INVALID_SOCKET) {
 		cerr << "accept failed with error: " << WSAGetLastError() << endl;
-		closesocket(*ListenSocket);
+		closesocket(ListenSocket);
 		WSACleanup();
 		return 1;
 	}
-	closesocket(*ListenSocket);
-	return *ClientSocket;
+	closesocket(ListenSocket);
+	return ClientSocket;
 }
 
-string recv_from_socket(SOCKET *socket) {
+string recv_from_socket(SOCKET socket) {
 	int iResult;
 	char recvbuf[DEFAULT_BUFLEN];
 
-	iResult = recv(*socket, recvbuf, DEFAULT_BUFLEN, 0);
+	iResult = recv(socket, recvbuf, DEFAULT_BUFLEN, 0);
 	if (iResult > 0) {
 		#ifdef VERBOSE
 		cout << "Bytes received: " << iResult << endl;
@@ -131,24 +131,37 @@ string recv_from_socket(SOCKET *socket) {
 		#ifdef VERBOSE
 		cout << "Nothing received" << endl;
 		#endif	
-		iResult = shutdown(*socket, SD_SEND);
+		iResult = shutdown(socket, SD_SEND);
 	}
 	
 	return recvbuf;
 }
 
-int close_socket(SOCKET *socket) {
+int send_over_socket(SOCKET socket, string buffer_to_send) {
+	char sendbuf[128];
+	strcpy(sendbuf, buffer_to_send.c_str());
+	int iSendResult = send(socket, sendbuf, buffer_to_send.length(), 0);
+	if (iSendResult == SOCKET_ERROR) {
+		printf("send failed with error: %d\n", WSAGetLastError());
+		closesocket(socket);
+		WSACleanup();
+		return -1;
+	}
+	return iSendResult;
+}
+
+int close_socket(SOCKET socket) {
 	int iResult;
-	iResult = shutdown(*socket, SD_SEND);
+	iResult = shutdown(socket, SD_SEND);
 	if (iResult == SOCKET_ERROR) {
 		cout << "shutdown failed with error: " << WSAGetLastError() << endl;
-		closesocket(*socket);
+		closesocket(socket);
 		WSACleanup();
 		return 1;
 	}
 
 	// cleanup
-	closesocket(*socket);
+	closesocket(socket);
 	WSACleanup();
 	return 0;
 }
@@ -160,33 +173,36 @@ int main(int argc, char* argv[])
 	string buffer;
 	PylonInitialize(); //inicializacia
 	CGrabResultPtr ptrGrabResult;
-#pragma endregion Init
+	bool terminate = false;
+	string temp;
+	#pragma endregion Init
 
-	#pragma region Accept_socket
 	//Vytvor socket server a cakaj na pripojenie
 	#ifdef VERBOSE
-	cout << "Cakam na spojenie s PLC na porte localhost:" << DEFAULT_PORT << endl;
+	cout << "Cakam na spojenie s PLC na porte localhost:" << DEFAULT_PORT << endl;	
 	#endif
 	
 	SOCKET main_sock = accept_socket(DEFAULT_PORT); //Tu stoji do pripojenia !!!!
 
-	#pragma endregion Accept_socket
-
-	#pragma region Search_cameras
 	CTlFactory& tlfactory = CTlFactory::GetInstance();
 	DeviceInfoList_t devices; //priprava hladania kamier
 
 	tlfactory.EnumerateDevices(devices);
-	if (!devices.empty()) { //ak nie je prazdne pole:
+	if (!devices.empty()) { //ak nie je prazdne pole kamier, ziteruj ich a identifikuj:
 		DeviceInfoList_t::const_iterator it;
 		for (it = devices.begin(); it != devices.end(); ++it) {
-#ifdef VERBOSE
-			cout << it->GetFullName() << " kamera sa nasla!" << endl << endl; //vypis nazov
-#endif	
+			#ifdef VERBOSE
+			cout << it->GetFullName() << "S/N: "<< it->GetSerialNumber()<< " kamera sa nasla!" << endl << endl; //vypis nazov
+			temp = std::string(it->GetSerialNumber());
+			#endif	
+			send_over_socket(main_sock, temp);
+
 		}
 	}
 	else { //inak vypis chybu
 		cerr << "Nenasli sa ziadne kamery!" << endl;
+		send_over_socket(main_sock, "err_no_camera_found");
+
 	}
 
 	//vytvor pole kamier (max c_maxcamerastouse)
@@ -198,28 +214,28 @@ int main(int argc, char* argv[])
 		kamery[i].Attach(tlfactory.CreateDevice(devices[i]));
 	}
 
-#pragma endregion Search_cameras
-
-	#pragma region Endless_loop
 	do {
-		#pragma region Accept_data
-		buffer = recv_from_socket(&main_sock); //nacitaj data zo socketu
+		buffer = recv_from_socket(main_sock); //nacitaj data zo socketu
+		if (buffer == "#exit")break; //ak je prikaz koniec - BREAK
+
 		#ifdef VERBOSE
 		cout << "Prijaty kod: "<<buffer << endl;
 		#endif
+
 		string serial, filename;
 		serial = buffer.substr(0, 8);//skopiruj S/N zo stringu
 		filename = buffer.substr(8, buffer.length() - 8); //parse filename
+
+
 		#ifdef VERBOSE
 		cout << "s/n: " << serial << ", filename: " << filename << endl;
 		#endif
-		#pragma endregion Accept_data
 
-		#pragma region GrabImage
 		for (int i = 0; i < kamery.GetSize(); i++) {
 			if(serial.compare(kamery[i].GetDeviceInfo().GetSerialNumber())) {
 				cout << "Nasiel som pripojenu kameru: " << serial << "Zachytavam obraz do suboru: " << filename << endl;
-				kamery[i].StartGrabbing(1);// c_countOfImagesToGrab);
+				kamery[i].StartGrabbing(1);// Zachyt 1 obrazok
+
 
 				try {
 					while (kamery[i].IsGrabbing())
@@ -243,6 +259,8 @@ int main(int argc, char* argv[])
 						else
 						{
 							cout << "Error: " << ptrGrabResult->GetErrorCode() << " " << ptrGrabResult->GetErrorDescription() << endl;
+							buffer = "#exit";
+							terminate = true;
 						}
 					}
 				}catch (const GenericException &e)
@@ -253,19 +271,19 @@ int main(int argc, char* argv[])
 					exitCode = 1;
 				}
 
-				buffer = "#exit"; //ukonci loop
+				//buffer = "#exit"; //ukonci loop
 			}
 		}
-		#pragma endregion GrabImage
+
+
 
 	} while (buffer!= "#exit");
-	cout << "Aplikacia ukoncena vzdialenym klientom kodom: "<< buffer << endl;
 
-	#pragma endregion Endless_loop	
-	
+	cout << "Aplikacia ukoncena vzdialenym klientom kodom: "<< buffer << endl;
+		
 
 	// Releases all pylon resources. 
-	PylonTerminate();
+	if(terminate)PylonTerminate();
 
 	return 0;
 }
