@@ -26,6 +26,7 @@ using namespace libconfig;
 // Number of images to be grabbed.
 static const uint32_t c_countOfImagesToGrab = 2;
 static const size_t c_maxCamerasToUse = 2;
+static bool connection_alive = false;
 
 #define DEFAULT_BUFLEN 512
 #define DEFAULT_PORT "27015"
@@ -111,8 +112,10 @@ SOCKET accept_socket(string port) {
 		closesocket(ListenSocket);
 		WSACleanup();
 		return 1;
+		connection_alive = false;
 	}
 	closesocket(ListenSocket);
+	connection_alive = true;
 	return ClientSocket;
 }
 
@@ -124,6 +127,7 @@ string recv_from_socket(SOCKET socket) {
 	if (iResult > 0) {
 		#ifdef VERBOSE
 		cout << "Bytes received: " << iResult << endl;
+		recvbuf[iResult] = 0;
 		#endif		
 	}
 	else {
@@ -132,20 +136,28 @@ string recv_from_socket(SOCKET socket) {
 		cout << "Nothing received" << endl;
 		#endif	
 		iResult = shutdown(socket, SD_SEND);
+		string temp = "#exit";
+		strcpy_s(recvbuf, temp.c_str());
+		connection_alive = false;
 	}
 	
 	return recvbuf;
 }
 
 int send_over_socket(SOCKET socket, string buffer_to_send) {
-	char sendbuf[128];
-	strcpy(sendbuf, buffer_to_send.c_str());
-	int iSendResult = send(socket, sendbuf, buffer_to_send.length(), 0);
-	if (iSendResult == SOCKET_ERROR) {
-		printf("send failed with error: %d\n", WSAGetLastError());
-		closesocket(socket);
-		WSACleanup();
-		return -1;
+	int iSendResult = -1;
+	if (connection_alive) {
+		char sendbuf[128];
+		strcpy_s(sendbuf, buffer_to_send.c_str());
+		int iSendResult;
+		iSendResult = send(socket, sendbuf, buffer_to_send.length(), 0);
+		if (iSendResult == SOCKET_ERROR) {
+			printf("send failed with error: %d\n", WSAGetLastError());
+			closesocket(socket);
+			WSACleanup();
+			connection_alive = false;
+			return -1;
+		}
 	}
 	return iSendResult;
 }
@@ -163,6 +175,7 @@ int close_socket(SOCKET socket) {
 	// cleanup
 	closesocket(socket);
 	WSACleanup();
+	connection_alive = false;
 	return 0;
 }
 
@@ -225,6 +238,7 @@ int main(int argc, char* argv[])
 		string serial, filename;
 		serial = buffer.substr(0, 8);//skopiruj S/N zo stringu
 		filename = buffer.substr(8, buffer.length() - 8); //parse filename
+		buffer = "";
 
 
 		#ifdef VERBOSE
@@ -232,10 +246,11 @@ int main(int argc, char* argv[])
 		#endif
 
 		for (int i = 0; i < kamery.GetSize(); i++) {
-			if(serial.compare(kamery[i].GetDeviceInfo().GetSerialNumber())) {
+			temp = std::string(kamery[i].GetDeviceInfo().GetSerialNumber());
+			if(!temp.compare(serial)) {
 				cout << "Nasiel som pripojenu kameru: " << serial << "Zachytavam obraz do suboru: " << filename << endl;
 				kamery[i].StartGrabbing(1);// Zachyt 1 obrazok
-
+				terminate = true;
 
 				try {
 					while (kamery[i].IsGrabbing())
@@ -253,21 +268,22 @@ int main(int argc, char* argv[])
 							//cout << "Gray value of first pixel: " << (uint32_t)pImageBuffer[0] << endl << endl;
 
 							#ifdef PYLON_WIN_BUILD
+							#ifdef VERBOSE
 							Pylon::DisplayImage(1, ptrGrabResult);	// Display the grabbed image.
 							#endif
+							#endif			
 						}
 						else
 						{
 							cout << "Error: " << ptrGrabResult->GetErrorCode() << " " << ptrGrabResult->GetErrorDescription() << endl;
 							buffer = "#exit";
-							terminate = true;
 						}
 					}
 				}catch (const GenericException &e)
 				{
 					// Error handling.
-					cerr << "An exception occurred." << endl
-						<< e.GetDescription() << endl;
+					cerr << "An exception occurred." << endl << e.GetDescription() << endl;
+					send_over_socket(main_sock, "err_capt_image");
 					exitCode = 1;
 				}
 
@@ -279,11 +295,18 @@ int main(int argc, char* argv[])
 
 	} while (buffer!= "#exit");
 
+	#ifdef VERBOSE
 	cout << "Aplikacia ukoncena vzdialenym klientom kodom: "<< buffer << endl;
-		
+	#endif
+
+	if (connection_alive) {
+		close_socket(main_sock);
+	}
+	
 
 	// Releases all pylon resources. 
-	if(terminate)PylonTerminate();
+	//PylonTerminate(); // nefunguje !!!
+	
 
 	return 0;
 }
