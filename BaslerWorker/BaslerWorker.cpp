@@ -4,9 +4,9 @@ Author: Stanislav Rubint, Ing., www.rubint.sk, 2017
 */
 
 #undef UNICODE
+#define WIN32_LEAN_AND_MEAN
 
 #include "stdafx.h"
-#define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <windows.h>
 #include <iostream>
@@ -39,11 +39,13 @@ static bool run_program = true;
 #define DEFAULT_PORT "27015"
 #define EXIT_KEY "#exit"
 #define CLOSE_KEY "#close"
+#define IMAGE_PATH "images\\"
 
-#define SN_NOT_FOUND "err_sn_not_found"
-#define NO_CAMERA_FOUND "err_no_camera_found"
-#define CAMERA_FOUND "camera_found"
-#define CAPTURE_FAILED "err_capture_failed"
+#define SN_NOT_FOUND "err_sn_not_found;"
+#define NO_CAMERA_FOUND "err_no_camera_found;"
+#define CAMERA_FOUND "camera_found;"
+#define CAPTURE_FAILED "err_capture_failed;"
+#define SAVING_FAILED "err_image_not_saved;"
 
 
 SOCKET init_sock(string port){
@@ -204,6 +206,7 @@ int main(int argc, char* argv[])
 	Mat	opencvImage;
 	CPylonImage pylonImage;
 	CImageFormatConverter formatConverter;
+	Config cfg;
 	#pragma endregion Init
 
 	while (run_program) {									//po odpojeni socketu cakaj na dalsi, zober fotky a tak dookola...
@@ -259,7 +262,8 @@ int main(int argc, char* argv[])
 
 			string serial, filename;
 			serial = buffer.substr(0, 8);												//skopiruj S/N zo stringu
-			filename = buffer.substr(8, buffer.length() - 8);							//aj nazov suboru
+			filename = buffer.substr(8, buffer.length() - 8);
+			filename.insert(0, IMAGE_PATH);												//aj nazov suboru
 			buffer = "";																//zmaž buffer
 
 #ifdef VERBOSE
@@ -294,12 +298,16 @@ int main(int argc, char* argv[])
 								Pylon::DisplayImage(1, ptrGrabResult);		// Display the grabbed image.
 #endif
 #endif	
+								formatConverter.OutputPixelFormat = PixelType_BGR8packed;
 								formatConverter.Convert(pylonImage, ptrGrabResult);
+
 								int resolution = MulDiv(ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth(), 1);
 								try {										//skús uloži obrázok
-									opencvImage = cv::Mat(ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth(), CV_8UC1, (uint8_t *)pylonImage.GetBuffer());
-
-									imwrite(filename, opencvImage);
+									opencvImage = cv::Mat(ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth(), CV_8UC3, (uint8_t *)pylonImage.GetBuffer());
+									if (!imwrite(filename, opencvImage)) {
+										send_over_socket(main_sock, SAVING_FAILED);
+										cerr << "Error saving image: " << SAVING_FAILED << endl;
+									}
 								}
 								catch (const GenericException &e) {
 									cerr << e.GetDescription() << endl << "Line: " << e.GetSourceLine() << endl;
