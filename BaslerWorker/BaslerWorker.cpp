@@ -49,7 +49,6 @@ static string CAPTURE_FAILED = "err_capture_failed;";
 static string SAVING_FAILED = "err_image_not_saved;";
 static string IMG_SAVED = "image_saved_succesfully;";
 
-
 SOCKET init_sock(string port){
 	WSADATA wsaData;
 	int iResult;
