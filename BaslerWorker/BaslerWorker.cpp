@@ -40,7 +40,7 @@ static bool run_program = true;
 static string DEFAULT_PORT = "27015";
 static string EXIT_KEY = "#exit";
 static string CLOSE_KEY = "#close";
-static string IMAGE_PATH = "images\\";
+static string IMAGE_PATH = "";
 
 static string SN_NOT_FOUND = "err_sn_not_found;";
 static string NO_CAMERA_FOUND = "err_no_camera_found;";
@@ -129,7 +129,7 @@ SOCKET accept_socket(string port) {
 		cerr << "accept failed with error: " << WSAGetLastError() << endl;
 		closesocket(ListenSocket);
 		WSACleanup();
-		return 1;
+		return -1;
 		connection_alive = false;
 	}
 	closesocket(ListenSocket);
@@ -166,7 +166,7 @@ int send_over_socket(SOCKET socket, string buffer_to_send) {
 	if (connection_alive) {
 		char sendbuf[128];
 		strcpy_s(sendbuf, buffer_to_send.c_str());
-		iSendResult = send(socket, sendbuf, buffer_to_send.length(), 0);
+		iSendResult = send(socket, sendbuf, (int)buffer_to_send.length(), 0);
 		if (iSendResult == SOCKET_ERROR) {
 			printf("send failed with error: %d\n", WSAGetLastError());
 			closesocket(socket);
@@ -197,17 +197,67 @@ int close_socket(SOCKET socket) {
 string parse_parameter(string file, string parameter) {
 	ifstream subor;
 	string value = "";
-	string line;
+	string line, prm, candidate;
+	int val_pos;
 	subor.open(CONFIG_FILE);
 
 	while (subor.is_open() && getline(subor, line)) {
-		if (line.find_first_of('=') != string::npos) {
-			;
+		val_pos = (int)line.find_first_of('=');
+		if (val_pos != string::npos && line[0]!='#') {
+			candidate = line.substr(val_pos + 1, (int)line.length() - val_pos - 1);
+			prm = line.substr(0, val_pos);
+			if (prm.compare(parameter) == 0) {
+				value = candidate;
+				break;
+			}
 		}
 	}
 	subor.close();
-
 	return value;
+}
+
+void load_global_parameters() {
+	string temp;
+	temp = parse_parameter(CONFIG_FILE, "PORT");
+	if (temp.compare("")) {
+		DEFAULT_PORT = temp;
+	}
+	temp = parse_parameter(CONFIG_FILE, "EXIT_KEY");
+	if (temp.compare("")) {
+		EXIT_KEY = temp;
+	}
+	temp = parse_parameter(CONFIG_FILE, "CLOSE_KEY");
+	if (temp.compare("")) {
+		CLOSE_KEY = temp;
+	}
+	temp = parse_parameter(CONFIG_FILE, "IMAGE_PATH");
+	if (temp.compare("")) {
+		IMAGE_PATH = temp;
+	}
+	temp = parse_parameter(CONFIG_FILE, "SN_NOT_FOUND");
+	if (temp.compare("")) {
+		SN_NOT_FOUND = temp;
+	}
+	temp = parse_parameter(CONFIG_FILE, "NO_CAMERA_FOUND");
+	if (temp.compare("")) {
+		NO_CAMERA_FOUND = temp;
+	}
+	temp = parse_parameter(CONFIG_FILE, "CAMERA_FOUND");
+	if (temp.compare("")) {
+		CAMERA_FOUND = temp;
+	}
+	temp = parse_parameter(CONFIG_FILE, "CAPTURE_FAILED");
+	if (temp.compare("")) {
+		CAPTURE_FAILED = temp;
+	}
+	temp = parse_parameter(CONFIG_FILE, "SAVING_FAILED");
+	if (temp.compare("")) {
+		SAVING_FAILED = temp;
+	}
+	temp = parse_parameter(CONFIG_FILE, "IMG_SAVED");
+	if (temp.compare("")) {
+		IMG_SAVED = temp;
+	}
 }
 
 int main(int argc, char* argv[])
@@ -225,10 +275,9 @@ int main(int argc, char* argv[])
 	CPylonImage pylonImage;
 	CImageFormatConverter formatConverter;
 	#pragma endregion Init
-
-	DEFAULT_PORT = parse_parameter(CONFIG_FILE, "port");
-	cout << DEFAULT_PORT;
 	
+	load_global_parameters();
+
 	while (run_program) {									//po odpojeni socketu cakaj na dalsi, zober fotky a tak dookola...
 
 #ifdef VERBOSE
@@ -236,7 +285,11 @@ int main(int argc, char* argv[])
 #endif
 
 		main_sock = accept_socket(DEFAULT_PORT);			//Vytvor socket server a cakaj na pripojenie, pozor, tu stoji do pripojenia !!!!
-
+		if (main_sock == -1) {
+			run_program = false;
+			cerr << "unable to open socket" << endl;
+			break;
+		}
 		CTlFactory& tlfactory = CTlFactory::GetInstance();
 		DeviceInfoList_t devices;							//priprava hladania kamier
 
@@ -321,7 +374,6 @@ int main(int argc, char* argv[])
 								formatConverter.OutputPixelFormat = PixelType_BGR8packed;
 								formatConverter.Convert(pylonImage, ptrGrabResult);
 
-								int resolution = MulDiv(ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth(), 1);
 								try {										//skús uloži obrázok
 									opencvImage = cv::Mat(ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth(), CV_8UC3, (uint8_t *)pylonImage.GetBuffer());
 									if (!imwrite(filename, opencvImage)) {
