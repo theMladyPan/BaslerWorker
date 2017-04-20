@@ -13,7 +13,6 @@ Author: Stanislav Rubint, Ing., www.rubint.sk, 2017
 #include <ws2tcpip.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include "libconfig.hh"
 #include <opencv2\core\core.hpp>
 #include <opencv2\highgui\highgui.hpp>
 #include <opencv2\video\video.hpp>
@@ -22,12 +21,12 @@ Author: Stanislav Rubint, Ing., www.rubint.sk, 2017
 	#include <pylon/PylonGUI.h>
 #endif
 #include <string>
+#include <fstream>
 
 #pragma comment (lib, "Ws2_32.lib")
 
 using namespace Pylon;
 using namespace std;
-using namespace libconfig;
 using namespace cv;
 
 static const size_t c_maxCamerasToUse = 8;
@@ -36,16 +35,19 @@ static bool run_program = true;
 
 //#define VERBOSE
 #define DEFAULT_BUFLEN 256
-#define DEFAULT_PORT "27015"
-#define EXIT_KEY "#exit"
-#define CLOSE_KEY "#close"
-#define IMAGE_PATH "images\\"
+#define CONFIG_FILE "defaults.cfg"
 
-#define SN_NOT_FOUND "err_sn_not_found;"
-#define NO_CAMERA_FOUND "err_no_camera_found;"
-#define CAMERA_FOUND "camera_found;"
-#define CAPTURE_FAILED "err_capture_failed;"
-#define SAVING_FAILED "err_image_not_saved;"
+static string DEFAULT_PORT = "27015";
+static string EXIT_KEY = "#exit";
+static string CLOSE_KEY = "#close";
+static string IMAGE_PATH = "images\\";
+
+static string SN_NOT_FOUND = "err_sn_not_found;";
+static string NO_CAMERA_FOUND = "err_no_camera_found;";
+static string CAMERA_FOUND = "camera_found;";
+static string CAPTURE_FAILED = "err_capture_failed;";
+static string SAVING_FAILED = "err_image_not_saved;";
+static string IMG_SAVED = "image_saved_succesfully;";
 
 
 SOCKET init_sock(string port){
@@ -192,6 +194,22 @@ int close_socket(SOCKET socket) {
 	return 0;
 }
 
+string parse_parameter(string file, string parameter) {
+	ifstream subor;
+	string value = "";
+	string line;
+	subor.open(CONFIG_FILE);
+
+	while (subor.is_open() && getline(subor, line)) {
+		if (line.find_first_of('=') != string::npos) {
+			;
+		}
+	}
+	subor.close();
+
+	return value;
+}
+
 int main(int argc, char* argv[])
 {
 	#pragma region Init
@@ -206,9 +224,11 @@ int main(int argc, char* argv[])
 	Mat	opencvImage;
 	CPylonImage pylonImage;
 	CImageFormatConverter formatConverter;
-	Config cfg;
 	#pragma endregion Init
 
+	DEFAULT_PORT = parse_parameter(CONFIG_FILE, "port");
+	cout << DEFAULT_PORT;
+	
 	while (run_program) {									//po odpojeni socketu cakaj na dalsi, zober fotky a tak dookola...
 
 #ifdef VERBOSE
@@ -307,6 +327,9 @@ int main(int argc, char* argv[])
 									if (!imwrite(filename, opencvImage)) {
 										send_over_socket(main_sock, SAVING_FAILED);
 										cerr << "Error saving image: " << SAVING_FAILED << endl;
+									}
+									else {
+										send_over_socket(main_sock, IMG_SAVED);
 									}
 								}
 								catch (const GenericException &e) {
