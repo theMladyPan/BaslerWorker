@@ -368,7 +368,7 @@ int main(int argc, char* argv[])
 								formatConverter.OutputPixelFormat = PixelType_BGR8packed;
 								formatConverter.Convert(pylonImage, ptrGrabResult);
 
-								try {													//skús uloži obrázok
+								try {													//skús uloži obrázok, skonvertuj na Maticu a zapíš do súboru
 									opencvImage = cv::Mat(ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth(), CV_8UC3, (uint8_t *)pylonImage.GetBuffer());
 									if (!imwrite(filename, opencvImage)) {
 										send_over_socket(main_sock, SAVING_FAILED);
@@ -411,7 +411,7 @@ int main(int argc, char* argv[])
 		cout << "Aplikacia ukoncena vzdialenym klientom kodom: " << buffer << endl;
 #endif
 
-		if (connection_alive) {
+		if (connection_alive) {				//uvo¾ni socket pre ïalšie pripojenie
 			close_socket(main_sock);
 		}
 		// Releases all pylon resources. 
