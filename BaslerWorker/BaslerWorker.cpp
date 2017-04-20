@@ -193,12 +193,10 @@ int close_socket(SOCKET socket) {
 	return 0;
 }
 
-string parse_parameter(string file, string parameter) {
-	ifstream subor;
+string parse_parameter(ifstream &subor, string parameter) {
 	string value = "";
 	string line, prm, candidate;
 	int val_pos;
-	subor.open(CONFIG_FILE);
 
 	while (subor.is_open() && getline(subor, line)) {
 		val_pos = (int)line.find_first_of('=');
@@ -211,49 +209,48 @@ string parse_parameter(string file, string parameter) {
 			}
 		}
 	}
-	subor.close();
 	return value;
 }
 
-void load_global_parameters() {
+void load_global_parameters(ifstream &subor) {
 	string temp;
-	temp = parse_parameter(CONFIG_FILE, "PORT");
+	temp = parse_parameter(subor, "PORT");
 	if (temp.compare("")) {
 		DEFAULT_PORT = temp;
 	}
-	temp = parse_parameter(CONFIG_FILE, "EXIT_KEY");
+	temp = parse_parameter(subor, "EXIT_KEY");
 	if (temp.compare("")) {
 		EXIT_KEY = temp;
 	}
-	temp = parse_parameter(CONFIG_FILE, "CLOSE_KEY");
+	temp = parse_parameter(subor, "CLOSE_KEY");
 	if (temp.compare("")) {
 		CLOSE_KEY = temp;
 	}
-	temp = parse_parameter(CONFIG_FILE, "IMAGE_PATH");
+	temp = parse_parameter(subor, "IMAGE_PATH");
 	if (temp.compare("")) {
 		IMAGE_PATH = temp;
 	}
-	temp = parse_parameter(CONFIG_FILE, "SN_NOT_FOUND");
+	temp = parse_parameter(subor, "SN_NOT_FOUND");
 	if (temp.compare("")) {
 		SN_NOT_FOUND = temp;
 	}
-	temp = parse_parameter(CONFIG_FILE, "NO_CAMERA_FOUND");
+	temp = parse_parameter(subor, "NO_CAMERA_FOUND");
 	if (temp.compare("")) {
 		NO_CAMERA_FOUND = temp;
 	}
-	temp = parse_parameter(CONFIG_FILE, "CAMERA_FOUND");
+	temp = parse_parameter(subor, "CAMERA_FOUND");
 	if (temp.compare("")) {
 		CAMERA_FOUND = temp;
 	}
-	temp = parse_parameter(CONFIG_FILE, "CAPTURE_FAILED");
+	temp = parse_parameter(subor, "CAPTURE_FAILED");
 	if (temp.compare("")) {
 		CAPTURE_FAILED = temp;
 	}
-	temp = parse_parameter(CONFIG_FILE, "SAVING_FAILED");
+	temp = parse_parameter(subor, "SAVING_FAILED");
 	if (temp.compare("")) {
 		SAVING_FAILED = temp;
 	}
-	temp = parse_parameter(CONFIG_FILE, "IMG_SAVED");
+	temp = parse_parameter(subor, "IMG_SAVED");
 	if (temp.compare("")) {
 		IMG_SAVED = temp;
 	}
@@ -275,7 +272,10 @@ int main(int argc, char* argv[])
 	CImageFormatConverter formatConverter;
 	#pragma endregion Init
 	
-	load_global_parameters();
+	ifstream subor;											//vytvor súbor na èítanie
+	subor.open(CONFIG_FILE);								//otvor ho
+	load_global_parameters(subor);							//naèítaj parametre
+	subor.close();											//zavri súbor
 
 	while (run_program) {									//po odpojeni socketu cakaj na dalsi, zober fotky a tak dookola...
 
@@ -350,7 +350,7 @@ int main(int argc, char* argv[])
 #ifdef VERBOSE
 					cout << "Nasiel som pripojenu kameru: " << serial << endl<<"Zachytavam obraz do suboru: " << filename << endl;
 #endif
-					kamery[i].StartGrabbing(1);				// Zachyt 1 obrazok
+					kamery[i].StartGrabbing(1);											// Zachyt 1 obrazok
 					terminate = true;
 
 					try {
@@ -359,21 +359,16 @@ int main(int argc, char* argv[])
 							kamery[i].RetrieveResult(5000, ptrGrabResult, TimeoutHandling_ThrowException);	// Wait for an image and then retrieve it. A timeout of 5000 ms is used.
 							if (ptrGrabResult->GrabSucceeded())												//Zachytilo obrazok uspesne?
 							{
-								// Access the image data.
-								//cout << "SizeX: " << ptrGrabResult->GetWidth() << endl;
-								//cout << "SizeY: " << ptrGrabResult->GetHeight() << endl;
-								const uint8_t *pImageBuffer = (uint8_t *)ptrGrabResult->GetBuffer();
-								//cout << "Gray value of first pixel: " << (uint32_t)pImageBuffer[0] << endl << endl;
-
+								//const uint8_t *pImageBuffer = (uint8_t *)ptrGrabResult->GetBuffer(); Buffer pre narábanie s raw dátami
 #ifdef PYLON_WIN_BUILD
 #ifdef VERBOSE
-								Pylon::DisplayImage(1, ptrGrabResult);		// Display the grabbed image.
+								Pylon::DisplayImage(1, ptrGrabResult);					// Display the grabbed image.
 #endif
 #endif	
 								formatConverter.OutputPixelFormat = PixelType_BGR8packed;
 								formatConverter.Convert(pylonImage, ptrGrabResult);
 
-								try {										//skús uloži obrázok
+								try {													//skús uloži obrázok
 									opencvImage = cv::Mat(ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth(), CV_8UC3, (uint8_t *)pylonImage.GetBuffer());
 									if (!imwrite(filename, opencvImage)) {
 										send_over_socket(main_sock, SAVING_FAILED);
