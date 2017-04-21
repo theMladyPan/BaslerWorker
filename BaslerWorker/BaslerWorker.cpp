@@ -23,6 +23,7 @@ Author: Stanislav Rubint, Ing., www.rubint.sk, 2017
 #include <string>
 #include <fstream>
 #include <algorithm>
+#include "BaslerWorker.h"
 
 #pragma comment (lib, "Ws2_32.lib")
 
@@ -40,8 +41,8 @@ static bool run_program = true;
 #define CONFIG_FILE "defaults.cfg"
 
 static string DEFAULT_PORT = "27015";
-static string EXIT_KEY = "#exit";
-static string CLOSE_KEY = "#close";
+static string EXIT_KEY = "<exit>";
+static string CLOSE_KEY = "<close>";
 static string IMAGE_PATH = "";
 
 static string SN_NOT_FOUND = "err_sn_not_found;";
@@ -50,6 +51,8 @@ static string CAMERA_FOUND = "camera_found;";
 static string CAPTURE_FAILED = "err_capture_failed;";
 static string SAVING_FAILED = "err_image_not_saved;";
 static string IMG_SAVED = "image_saved_succesfully;";
+static string INVALID_FILENAME = "err_invalid_filename;";
+static string MSG_SHORT = "err_message_too_short_or_invalid";
 
 SOCKET init_sock(string port){
 	WSADATA wsaData;
@@ -256,6 +259,10 @@ void load_global_parameters(ifstream &subor) {
 	if (temp.compare("")) {
 		IMG_SAVED = temp;
 	}
+	temp = parse_parameter(subor, "INVALID_FILENAME");
+	if (temp.compare("")) {
+		INVALID_FILENAME = temp;
+	}
 }
 
 int main(int argc, char* argv[])
@@ -325,106 +332,122 @@ int main(int argc, char* argv[])
 
 		do {
 			buffer = recv_from_socket(main_sock);			//nacitaj data zo socketu
-			if (buffer == CLOSE_KEY)break;					//ak je prikaz koniec	- zavri kamery aj Socket
-			if (buffer == EXIT_KEY) {						//ak je prikaz EXIT_KEY	- zavri a opust program
-				run_program = false;
-				break;
+			if (buffer.find(CLOSE_KEY) != string::npos) {
+				break;										//ak je prikaz koniec	- zavri kamery aj Socket
+			}else
+				if (buffer.find(EXIT_KEY) != string::npos) {							//ak je prikaz EXIT_KEY	- zavri a opust program
+					run_program = false;
+					break;
 			}
 
 #ifdef VERBOSE
 			cout << "Prijaty kod: " << buffer << endl;
 #endif
-
-			serial = buffer.substr(0, 8);												//skopiruj S/N zo stringu
-			exposure = std::min(std::max(stof(buffer.substr(8, 6)),(float)40.0),(float)999900.0);
-			filename = buffer.substr(14, buffer.length() - 14);
-			filename.insert(0, IMAGE_PATH);												//aj nazov suboru
-			buffer = "";																//zmaž buffer
-
-#ifdef VERBOSE
-			cout << "s/n: " << serial << ", exposure: " << exposure << ", filename: " << filename << endl;
-#endif
-			camera_found = false;
-			for (int i = 0; i < kamery.GetSize(); i++) {
-				temp = std::string(kamery[i].GetDeviceInfo().GetSerialNumber());
-				if (!temp.compare(serial)) {
-					camera_found = true;
-					send_over_socket(main_sock, CAMERA_FOUND);
-					
-					INodeMap &nodemap =kamery[i].GetNodeMap();
-					kamery[i].Open();
-					CFloatPtr exposureTime(nodemap.GetNode("ExposureTimeAbs"));			//získaj expozíciu
-
-					try {
-						if (IsWritable(exposureTime))									//ak je prepisovate¾ná
-						{
-							exposureTime->SetValue(exposure);							//prepíš novou hodnotou
-						}
-						else {
-							cout << "Gain unwriteable." << endl;
-						}
-					}
-					catch (GenericException &e) {
-						cout << "Nenacitany parameter: "<<e.GetDescription()<<" @ line: "<<e.GetSourceLine() << endl;
-					}
+			if (buffer.size() >= 18) {
+				try {
+					serial = buffer.substr(0, 8);												//skopiruj S/N zo stringu
+					exposure = std::min(std::max(stof(buffer.substr(8, 6)), (float)40.0), (float)999900.0);
+					filename = buffer.substr(14, buffer.length() - 14);							//aj nazov suboru
+					filename.insert(0, IMAGE_PATH);
+					buffer = "";																//zmaž buffer
+				}
+				catch (std::invalid_argument &e) {
+					cerr << e.what()<<endl;
+				}
+				if (filename.find(".jpg") == string::npos && filename.find(".JPG") == string::npos && filename.find(".PNG") == string::npos && filename.find(".png") == string::npos) {
+					send_over_socket(main_sock, INVALID_FILENAME);
+				}
+				else {
 
 #ifdef VERBOSE
-					cout << "Nasiel som pripojenu kameru: " << serial << endl<<"Zachytavam obraz do suboru: " << filename << endl;
+					cout << "s/n: " << serial << ", exposure: " << exposure << ", filename: " << filename << endl;
 #endif
-					kamery[i].StartGrabbing(1);											// Zachy 1 obrazok
-					terminate = true;
+					camera_found = false;
+					for (int i = 0; i < kamery.GetSize(); i++) {
+						temp = std::string(kamery[i].GetDeviceInfo().GetSerialNumber());
+						if (!temp.compare(serial)) {
+							camera_found = true;
+							send_over_socket(main_sock, CAMERA_FOUND);
 
-					try {
-						while (kamery[i].IsGrabbing())
-						{		
-							kamery[i].RetrieveResult(5000, ptrGrabResult, TimeoutHandling_ThrowException);	// Wait for an image and then retrieve it. A timeout of 5000 ms is used.
-							if (ptrGrabResult->GrabSucceeded())												//Zachytilo obrazok uspesne?
-							{
-								//const uint8_t *pImageBuffer = (uint8_t *)ptrGrabResult->GetBuffer(); Buffer pre narábanie s raw dátami
+							INodeMap &nodemap = kamery[i].GetNodeMap();
+							kamery[i].Open();
+							CFloatPtr exposureTime(nodemap.GetNode("ExposureTimeAbs"));			//získaj expozíciu
+
+							try {
+								if (IsWritable(exposureTime))									//ak je prepisovate¾ná
+								{
+									exposureTime->SetValue(exposure);							//prepíš novou hodnotou
+								}
+								else {
+									cout << "Gain unwriteable." << endl;
+								}
+							}
+							catch (GenericException &e) {
+								cout << "Nenacitany parameter: " << e.GetDescription() << " @ line: " << e.GetSourceLine() << endl;
+							}
+
+#ifdef VERBOSE
+							cout << "Nasiel som pripojenu kameru: " << serial << endl << "Zachytavam obraz do suboru: " << filename << endl;
+#endif
+							kamery[i].StartGrabbing(1);											// Zachy 1 obrazok
+							terminate = true;
+
+							try {
+								while (kamery[i].IsGrabbing())
+								{
+									kamery[i].RetrieveResult(5000, ptrGrabResult, TimeoutHandling_ThrowException);	// Wait for an image and then retrieve it. A timeout of 5000 ms is used.
+									if (ptrGrabResult->GrabSucceeded())												//Zachytilo obrazok uspesne?
+									{
+										//const uint8_t *pImageBuffer = (uint8_t *)ptrGrabResult->GetBuffer(); Buffer pre narábanie s raw dátami
 #ifdef PYLON_WIN_BUILD
 #ifdef VERBOSE
-								Pylon::DisplayImage(1, ptrGrabResult);					// Display the grabbed image.
+										Pylon::DisplayImage(1, ptrGrabResult);					// Display the grabbed image.
 #endif
 #endif	
-								formatConverter.OutputPixelFormat = PixelType_BGR8packed;
-								formatConverter.Convert(pylonImage, ptrGrabResult);
+										formatConverter.OutputPixelFormat = PixelType_BGR8packed;
+										formatConverter.Convert(pylonImage, ptrGrabResult);
 
-								try {													//skús uloži obrázok, skonvertuj na Maticu a zapíš do súboru
-									opencvImage = cv::Mat(ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth(), CV_8UC3, (uint8_t *)pylonImage.GetBuffer());
-									if (!imwrite(filename, opencvImage)) {
-										send_over_socket(main_sock, SAVING_FAILED);
-										cerr << "Error saving image: " << SAVING_FAILED << endl;
+										try {													//skús uloži obrázok, skonvertuj na Maticu a zapíš do súboru
+											opencvImage = cv::Mat(ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth(), CV_8UC3, (uint8_t *)pylonImage.GetBuffer());
+											if (!imwrite(filename, opencvImage)) {
+												send_over_socket(main_sock, SAVING_FAILED);
+												cerr << "Error saving image: " << SAVING_FAILED << endl;
+											}
+											else {
+												send_over_socket(main_sock, IMG_SAVED);
+											}
+										}
+										catch (const GenericException &e) {
+											cerr << e.GetDescription() << endl << "Line: " << e.GetSourceLine() << endl;
+											break;
+										}
+
 									}
-									else {
-										send_over_socket(main_sock, IMG_SAVED);
+									else
+									{
+										cerr << "Error: " << ptrGrabResult->GetErrorCode() << " " << ptrGrabResult->GetErrorDescription() << endl;
+										buffer = CLOSE_KEY;
+										send_over_socket(main_sock, CAPTURE_FAILED);
 									}
 								}
-								catch (const GenericException &e) {
-									cerr << e.GetDescription() << endl << "Line: " << e.GetSourceLine() << endl;
-									break;
-								}
-
 							}
-							else
+							catch (const GenericException &e)
 							{
-								cerr << "Error: " << ptrGrabResult->GetErrorCode() << " " << ptrGrabResult->GetErrorDescription() << endl;
-								buffer = CLOSE_KEY;
-								send_over_socket(main_sock, CAPTURE_FAILED);
+								cerr << "An exception occurred." << endl << e.GetDescription() << endl;
+								send_over_socket(main_sock, "err_capt_image");
+								exitCode = 1;
 							}
+							kamery[i].Close();
 						}
 					}
-					catch (const GenericException &e)
-					{
-						cerr << "An exception occurred." << endl << e.GetDescription() << endl;
-						send_over_socket(main_sock, "err_capt_image");
-						exitCode = 1;
+					if (!camera_found) {
+						cerr << SN_NOT_FOUND << endl;
+						send_over_socket(main_sock, SN_NOT_FOUND);
 					}
-					kamery[i].Close();
 				}
 			}
-			if (!camera_found) {
-				cerr << SN_NOT_FOUND << endl;
-				send_over_socket(main_sock, SN_NOT_FOUND);
+			else {
+				send_over_socket(main_sock, MSG_SHORT);
 			}
 
 		} while (buffer != CLOSE_KEY);		//koniec hlavnej sluèky príjmu dát
