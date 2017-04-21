@@ -22,18 +22,20 @@ Author: Stanislav Rubint, Ing., www.rubint.sk, 2017
 #endif
 #include <string>
 #include <fstream>
+#include <algorithm>
 
 #pragma comment (lib, "Ws2_32.lib")
 
 using namespace Pylon;
 using namespace std;
 using namespace cv;
+using namespace GenApi;
 
 static const size_t c_maxCamerasToUse = 8;
 static bool connection_alive = false;
 static bool run_program = true;
 
-//#define VERBOSE
+#define VERBOSE
 #define DEFAULT_BUFLEN 256
 #define CONFIG_FILE "defaults.cfg"
 
@@ -270,6 +272,8 @@ int main(int argc, char* argv[])
 	Mat	opencvImage;
 	CPylonImage pylonImage;
 	CImageFormatConverter formatConverter;
+	double exposure;
+	string serial, filename;
 	#pragma endregion Init
 	
 	ifstream subor;											//vytvor súbor na èítanie
@@ -305,7 +309,6 @@ int main(int argc, char* argv[])
 				temp.append(string(it->GetFullName()),33, string(it->GetFullName()).find_first_of(':')-string(it->GetFullName()).find_last_of('#')-1);
 				temp.append(";");
 				send_over_socket(main_sock, temp);			//urob cary/mary, pridaj S/N kamery a IP adresu a posli cez socket
-
 			}
 		}
 		else { //inak vypis chybu
@@ -332,14 +335,14 @@ int main(int argc, char* argv[])
 			cout << "Prijaty kod: " << buffer << endl;
 #endif
 
-			string serial, filename;
 			serial = buffer.substr(0, 8);												//skopiruj S/N zo stringu
-			filename = buffer.substr(8, buffer.length() - 8);
+			exposure = std::min(std::max(stof(buffer.substr(8, 6)),(float)40.0),(float)999900.0);
+			filename = buffer.substr(14, buffer.length() - 14);
 			filename.insert(0, IMAGE_PATH);												//aj nazov suboru
 			buffer = "";																//zmaž buffer
 
 #ifdef VERBOSE
-			cout << "s/n: " << serial << ", filename: " << filename << endl;
+			cout << "s/n: " << serial << ", exposure: " << exposure << ", filename: " << filename << endl;
 #endif
 			camera_found = false;
 			for (int i = 0; i < kamery.GetSize(); i++) {
@@ -347,10 +350,28 @@ int main(int argc, char* argv[])
 				if (!temp.compare(serial)) {
 					camera_found = true;
 					send_over_socket(main_sock, CAMERA_FOUND);
+					
+					INodeMap &nodemap =kamery[i].GetNodeMap();
+					kamery[i].Open();
+					CFloatPtr exposureTime(nodemap.GetNode("ExposureTimeAbs"));			//získaj expozíciu
+
+					try {
+						if (IsWritable(exposureTime))									//ak je prepisovate¾ná
+						{
+							exposureTime->SetValue(exposure);							//prepíš novou hodnotou
+						}
+						else {
+							cout << "Gain unwriteable." << endl;
+						}
+					}
+					catch (GenericException &e) {
+						cout << "Nenacitany parameter: "<<e.GetDescription()<<" @ line: "<<e.GetSourceLine() << endl;
+					}
+
 #ifdef VERBOSE
 					cout << "Nasiel som pripojenu kameru: " << serial << endl<<"Zachytavam obraz do suboru: " << filename << endl;
 #endif
-					kamery[i].StartGrabbing(1);											// Zachyt 1 obrazok
+					kamery[i].StartGrabbing(1);											// Zachy 1 obrazok
 					terminate = true;
 
 					try {
@@ -398,6 +419,7 @@ int main(int argc, char* argv[])
 						send_over_socket(main_sock, "err_capt_image");
 						exitCode = 1;
 					}
+					kamery[i].Close();
 				}
 			}
 			if (!camera_found) {
