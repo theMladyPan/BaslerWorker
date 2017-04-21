@@ -53,6 +53,7 @@ static string SAVING_FAILED = "err_image_not_saved;";
 static string IMG_SAVED = "image_saved_succesfully;";
 static string INVALID_FILENAME = "err_invalid_filename;";
 static string MSG_SHORT = "err_message_too_short_or_invalid";
+static string EXIT_MSG = "exitting...;";
 
 SOCKET init_sock(string port){
 	WSADATA wsaData;
@@ -184,6 +185,7 @@ int send_over_socket(SOCKET socket, string buffer_to_send) {
 
 int close_socket(SOCKET socket) {
 	int iResult;
+	send_over_socket(socket, EXIT_MSG);
 	iResult = shutdown(socket, SD_SEND);
 	if (iResult == SOCKET_ERROR) {
 		cout << "shutdown failed with error: " << WSAGetLastError() << endl;
@@ -363,7 +365,7 @@ int main(int argc, char* argv[])
 					cout << "s/n: " << serial << ", exposure: " << exposure << ", filename: " << filename << endl;
 #endif
 					camera_found = false;
-					for (int i = 0; i < kamery.GetSize(); i++) {
+					for (unsigned int i = 0; i < kamery.GetSize(); i++) {
 						temp = std::string(kamery[i].GetDeviceInfo().GetSerialNumber());
 						if (!temp.compare(serial)) {
 							camera_found = true;
@@ -462,6 +464,9 @@ int main(int argc, char* argv[])
 		// Releases all pylon resources. 
 		//PylonTerminate(); // nefunguje !!!
 	}	//koniec sluèky programu
+	if (connection_alive) {				//uvo¾ni socket pre ïalšie pripojenie
+		close_socket(main_sock);
+	}
 
 	return 0;
 }
