@@ -32,6 +32,7 @@ using namespace std;
 using namespace cv;
 using namespace GenApi;
 
+#pragma region defaults
 static const size_t c_maxCamerasToUse = 8;
 static bool connection_alive = false;
 static bool run_program = true;
@@ -55,6 +56,7 @@ static string INVALID_FILENAME = "err_invalid_filename;";
 static string MSG_SHORT = "err_message_too_short_or_invalid";
 static string EXIT_MSG = "exitting...;";
 static string CONN_BROKEN = "err_connection_to_camera_broken;";
+#pragma endregion
 
 SOCKET init_sock(string port){
 	WSADATA wsaData;
@@ -266,6 +268,18 @@ void load_global_parameters(ifstream &subor) {
 	if (temp.compare("")) {
 		INVALID_FILENAME = temp;
 	}
+	temp = parse_parameter(subor, "MSG_SHORT");
+	if (temp.compare("")) {
+		MSG_SHORT = temp;
+	}
+	temp = parse_parameter(subor, "EXIT_MSG");
+	if (temp.compare("")) {
+		EXIT_MSG = temp;
+	}
+	temp = parse_parameter(subor, "CONN_BROKEN");
+	if (temp.compare("")) {
+		CONN_BROKEN = temp;
+	}
 }
 
 int main(int argc, char* argv[])
@@ -293,6 +307,8 @@ int main(int argc, char* argv[])
 	load_global_parameters(subor);							//naèítaj parametre
 	subor.close();											//zavri súbor
 
+	cout << "Welcome to BaslerWorker-1.0, Copyright (C) Rubint Stanislav Ing., 2017 (http://rubint.sk), released under GNU/GPLv3 License: http://www.gnu.org/licenses/" << endl;
+
 	while (run_program) {									//po odpojeni socketu cakaj na dalsi, zober fotky a tak dookola...
 
 #ifdef VERBOSE
@@ -305,7 +321,7 @@ int main(int argc, char* argv[])
 			cerr << "unable to open socket" << endl;
 			break;
 		}							//priprava hladania kamier
-
+		
 		tlfactory.EnumerateDevices(devices);
 		if (!devices.empty()) {								//ak nie je prazdne pole kamier, ziteruj ich a identifikuj:
 			DeviceInfoList_t::const_iterator it;
