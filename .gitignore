@@ -10,6 +10,9 @@
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 
+#nieco co nechcem uploadovat
+[Bb]inaries/
+
 # Build results
 [Dd]ebug/
 [Dd]ebugPublic/
