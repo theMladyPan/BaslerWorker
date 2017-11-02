@@ -3,60 +3,9 @@ Created under GNU/GPL license v3
 Author: Stanislav Rubint, Ing., www.rubint.sk, 2017
 */
 
-#undef UNICODE
-#define WIN32_LEAN_AND_MEAN
-
 #include "stdafx.h"
-#include <winsock2.h>
-#include <windows.h>
-#include <iostream>
-#include <ws2tcpip.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <opencv2\core\core.hpp>
-#include <opencv2\highgui\highgui.hpp>
-#include <opencv2\video\video.hpp>
-#include <pylon/PylonIncludes.h>
-#ifdef PYLON_WIN_BUILD
-	#include <pylon/PylonGUI.h>
-#endif
-#include <string>
-#include <fstream>
-#include <algorithm>
 #include "BaslerWorker.h"
 
-#pragma comment (lib, "Ws2_32.lib")
-
-using namespace Pylon;
-using namespace std;
-using namespace cv;
-using namespace GenApi;
-
-#pragma region defaults
-static const size_t c_maxCamerasToUse = 8;
-static bool connection_alive = false;
-static bool run_program = true;
-
-#define VERBOSE
-#define DEFAULT_BUFLEN 256
-#define CONFIG_FILE "defaults.cfg"
-
-static string DEFAULT_PORT = "27015";
-static string EXIT_KEY = "<exit>";
-static string CLOSE_KEY = "<close>";
-static string IMAGE_PATH = "";
-
-static string SN_NOT_FOUND = "err_sn_not_found;";
-static string NO_CAMERA_FOUND = "err_no_camera_found;";
-static string CAMERA_FOUND = "camera_found;";
-static string CAPTURE_FAILED = "err_capture_failed;";
-static string SAVING_FAILED = "err_image_not_saved;";
-static string IMG_SAVED = "image_saved_succesfully;";
-static string INVALID_FILENAME = "err_invalid_filename;";
-static string MSG_SHORT = "err_message_too_short_or_invalid";
-static string EXIT_MSG = "exitting...;";
-static string CONN_BROKEN = "err_connection_to_camera_broken;";
-#pragma endregion
 
 SOCKET init_sock(string port){
 	WSADATA wsaData;
@@ -228,6 +177,10 @@ void load_global_parameters(ifstream &subor) {
 	if (temp.compare("")) {
 		DEFAULT_PORT = temp;
 	}
+	temp = parse_parameter(subor, "TIMEOUT");
+	if (temp.compare("")) {
+		TIMEOUT = temp;
+	}
 	temp = parse_parameter(subor, "EXIT_KEY");
 	if (temp.compare("")) {
 		EXIT_KEY = temp;
@@ -302,10 +255,10 @@ int main(int argc, char* argv[])
 	DeviceInfoList_t devices;
 	#pragma endregion Init
 	
-	ifstream subor;											//vytvor súbor na èítanie
+	ifstream subor;											//vytvor sï¿½bor na ï¿½ï¿½tanie
 	subor.open(CONFIG_FILE);								//otvor ho
-	load_global_parameters(subor);							//naèítaj parametre
-	subor.close();											//zavri súbor
+	load_global_parameters(subor);							//naï¿½ï¿½taj parametre
+	subor.close();											//zavri sï¿½bor
 
 	cout << "Welcome to BaslerWorker-1.0, Copyright (C) Rubint Stanislav Ing., 2017 (http://rubint.sk), released under GNU/GPLv3 License: http://www.gnu.org/licenses/" << endl;
 
@@ -365,10 +318,10 @@ int main(int argc, char* argv[])
 			if (buffer.size() >= 18) {
 				try {
 					serial = buffer.substr(0, 8);												//skopiruj S/N zo stringu
-					exposure = std::min(std::max(stof(buffer.substr(8, 6)), (float)40.0), (float)999900.0);
+					exposure = std::min(std::max(stof(buffer.substr(8, 6)), (float)40.0), (float)999900.0); //nastav expoziciu 40<prijata_exp<999900 us
 					filename = buffer.substr(14, buffer.length() - 14);							//aj nazov suboru
 					filename.insert(0, IMAGE_PATH);
-					buffer = "";																//zmaž buffer
+					buffer = "";																//zmaï¿½ buffer
 				}
 				catch (std::invalid_argument &e) {
 					cerr << e.what()<<endl;
@@ -391,12 +344,12 @@ int main(int argc, char* argv[])
 							try {
 								INodeMap &nodemap = kamery[i].GetNodeMap();
 								kamery[i].Open();
-								CFloatPtr exposureTime(nodemap.GetNode("ExposureTimeAbs"));			//získaj expozíciu
+								CFloatPtr exposureTime(nodemap.GetNode("ExposureTimeAbs"));			//zï¿½skaj expozï¿½ciu
 
 								try {
-									if (IsWritable(exposureTime))									//ak je prepisovate¾ná
+									if (IsWritable(exposureTime))									//ak je prepisovateï¿½nï¿½
 									{
-										exposureTime->SetValue(exposure);							//prepíš novou hodnotou
+										exposureTime->SetValue(exposure);							//prepï¿½ novou hodnotou
 									}
 									else {
 										cout << "Gain unwriteable." << endl;
@@ -407,18 +360,18 @@ int main(int argc, char* argv[])
 								}
 
 #ifdef VERBOSE
-								cout << "Nasiel som pripojenu kameru: " << serial << endl << "Zachytavam obraz do suboru: " << filename << endl;
+								cout << "Nasiel som pripojenu kameru: " << serial << endl << "Zachytavam obraz do suboru: " << filename << ", timeout: " << atoi(TIMEOUT.c_str())<< endl;
 #endif
-								kamery[i].StartGrabbing(1);											// Zachy 1 obrazok
+								kamery[i].StartGrabbing(1);											// Zachyï¿½ 1 obrazok
 								terminate = true;
 
 								try {
 									while (kamery[i].IsGrabbing())
 									{
-										kamery[i].RetrieveResult(5000, ptrGrabResult, TimeoutHandling_ThrowException);	// Wait for an image and then retrieve it. A timeout of 5000 ms is used.
+										kamery[i].RetrieveResult(atoi(TIMEOUT.c_str()), ptrGrabResult, TimeoutHandling_ThrowException);	// Wait for an image and then retrieve it. A timeout of 5000 ms is used.
 										if (ptrGrabResult->GrabSucceeded())												//Zachytilo obrazok uspesne?
 										{
-											//const uint8_t *pImageBuffer = (uint8_t *)ptrGrabResult->GetBuffer(); Buffer pre narábanie s raw dátami
+											//const uint8_t *pImageBuffer = (uint8_t *)ptrGrabResult->GetBuffer(); Buffer pre narï¿½banie s raw dï¿½tami
 #ifdef PYLON_WIN_BUILD
 #ifdef VERBOSE
 											Pylon::DisplayImage(1, ptrGrabResult);					// Display the grabbed image.
@@ -427,7 +380,7 @@ int main(int argc, char* argv[])
 											formatConverter.OutputPixelFormat = PixelType_BGR8packed;
 											formatConverter.Convert(pylonImage, ptrGrabResult);
 
-											try {													//skús uloži obrázok, skonvertuj na Maticu a zapíš do súboru
+											try {													//skï¿½s uloï¿½iï¿½ obrï¿½zok, skonvertuj na Maticu a zapï¿½ do sï¿½boru
 												opencvImage = cv::Mat(ptrGrabResult->GetHeight(), ptrGrabResult->GetWidth(), CV_8UC3, (uint8_t *)pylonImage.GetBuffer());
 												if (!imwrite(filename, opencvImage)) {
 													send_over_socket(main_sock, SAVING_FAILED);
@@ -476,19 +429,19 @@ int main(int argc, char* argv[])
 				send_over_socket(main_sock, MSG_SHORT);
 			}
 
-		} while (buffer != CLOSE_KEY);		//koniec hlavnej sluèky príjmu dát
+		} while (buffer != CLOSE_KEY);		//koniec hlavnej sluï¿½ky prï¿½jmu dï¿½t
 
 #ifdef VERBOSE
 		cout << "Aplikacia ukoncena vzdialenym klientom kodom: " << buffer << endl;
 #endif
 
-		if (connection_alive) {				//uvo¾ni socket pre ïalšie pripojenie
+		if (connection_alive) {				//uvoï¿½ni socket pre ï¿½alï¿½ie pripojenie
 			close_socket(main_sock);
 		}
 		// Releases all pylon resources. 
 		//PylonTerminate(); // nefunguje !!!
-	}	//koniec sluèky programu
-	if (connection_alive) {				//uvo¾ni socket pre ïalšie pripojenie
+	}	//koniec sluï¿½ky programu
+	if (connection_alive) {				//uvoï¿½ni socket pre ï¿½alï¿½ie pripojenie
 		close_socket(main_sock);
 	}
 
