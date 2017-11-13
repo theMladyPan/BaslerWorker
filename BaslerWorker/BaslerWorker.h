@@ -17,7 +17,8 @@
 #include <string>
 #include <fstream>
 #include <algorithm>	
-
+#include <string>
+#include <vector>
 
 #pragma comment (lib, "Ws2_32.lib")
 
@@ -31,7 +32,6 @@ static const size_t c_maxCamerasToUse = 8;
 static bool connection_alive = false;
 static bool run_program = true;
 
-#define VERBOSE
 #define DEFAULT_BUFLEN 256
 #define CONFIG_FILE "defaults.cfg"
 
@@ -51,7 +51,7 @@ static string INVALID_FILENAME = "err_invalid_filename;";
 static string MSG_SHORT = "err_message_too_short_or_invalid";
 static string EXIT_MSG = "exitting...;";
 static string CONN_BROKEN = "err_connection_to_camera_broken;";
-#pragma endregion
+#pragma endregion //defaults
 
 SOCKET init_sock(string port);
 SOCKET accept_socket(string port);
@@ -60,3 +60,6 @@ int send_over_socket(SOCKET socket, string buffer_to_send);
 int close_socket(SOCKET socket);
 string parse_parameter(ifstream &subor, string parameter);
 void load_global_parameters(ifstream &subor);
+
+
+boolean verbose = false;
