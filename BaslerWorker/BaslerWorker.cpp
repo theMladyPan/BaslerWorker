@@ -268,7 +268,7 @@ int main(int argc, char* argv[]){
 	subor.close();											//zavri s�bor
 
 	if (verbose) {
-		cout << "BaslerWorker-1.1, Copyright (C) Rubint Stanislav Ing., 2017 (http://rubint.sk), licensovane GNU/GPLv3 License: http://www.gnu.org/licenses/" << endl;
+		cout << "BaslerWorker-v1.3, Copyright (C) Rubint Stanislav Ing., 2017 (http://rubint.sk), licensovane GNU/GPLv3 License: http://www.gnu.org/licenses/" << endl;
 	}
 
 	while (run_program) {									//po odpojeni socketu cakaj na dalsi, zober fotky a tak dookola...
