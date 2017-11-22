@@ -1,9 +1,11 @@
 # BaslerWorker
-v0.0
+
+## Info
 Very small app made for getting TCP message, capturing image from connected basler camera and then saving it locally.
 Compiled and tested mainly under:
+
 OS | Win10 pro
--- | ---------
+--------- | ---------
 Visual studio | VS2017
 architecture | x64
 C++ | v11
