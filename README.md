@@ -22,4 +22,4 @@ for image which is then saved to desired filename.
 [v1.4](https://github.com/theMladyPan/BaslerWorker/releases/tag/v1.4)
 
 ## From commit
-e684b706c80909cc25eb5df08fba103b3ffec81e
+ [e684b70](https://github.com/theMladyPan/BaslerWorker/commit/e684b706c80909cc25eb5df08fba103b3ffec81e)
